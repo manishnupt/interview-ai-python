@@ -63,14 +63,30 @@ class SheetWriter:
         self._batch_update(updates)
         print(f"[Sheet] Written interview report for {candidate.name}")
 
-    def mark_no_fit(self, candidate: Candidate) -> None:
+    def reset_all(self) -> int:
+        """Clear columns E-M for every data row. Returns the number of rows cleared."""
+        rows = self._sheet.get_all_values()
+        data_rows = rows[1:]  # skip header
+        if not data_rows:
+            return 0
+        updates = []
+        for i, _ in enumerate(data_rows, start=2):
+            for col_letter in ("E", "F", "G", "H", "I", "J", "K", "L", "M"):
+                updates.append({"range": f"{col_letter}{i}", "values": [[""]]})
+        self._batch_update(updates)
+        return len(data_rows)
+
+    def mark_status(self, candidate: Candidate, status: str) -> None:
         try:
-            self._sheet.update_cell(candidate.sheet_row_index, 5, "Rejected")
+            self._sheet.update_cell(candidate.sheet_row_index, 5, status)
         except gspread.exceptions.APIError as e:
             print(f"[Sheet] API error, retrying in 5s — {e}")
             time.sleep(5)
-            self._sheet.update_cell(candidate.sheet_row_index, 5, "Rejected")
-        print(f"[Sheet] Marked {candidate.name} as rejected")
+            self._sheet.update_cell(candidate.sheet_row_index, 5, status)
+        print(f"[Sheet] Marked {candidate.name} as {status}")
+
+    def mark_no_fit(self, candidate: Candidate) -> None:
+        self.mark_status(candidate, "Rejected")
 
     def _batch_update(self, updates: list[dict]) -> None:
         try:

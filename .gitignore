@@ -3,3 +3,4 @@ service_account.json
 __pycache__/
 *.pyc
 .DS_Store
+run_log.txt

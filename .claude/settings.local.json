@@ -2,7 +2,23 @@
   "permissions": {
     "allow": [
       "Bash(python *)",
-      "Bash(pip install *)"
+      "Bash(pip install *)",
+      "Bash(curl -s -X POST http://localhost:8000/twiml -w \"\\\\nHTTP:%{http_code}\")",
+      "Bash(curl -s -X POST http://localhost:8000/call-status -d 'CallStatus=completed&CallSid=CA_TEST123' -w '\\\\nHTTP:%{http_code}')",
+      "Bash(curl -s http://localhost:8000/media-stream -w \"\\\\nHTTP:%{http_code}\")",
+      "Bash(pip show *)",
+      "Bash(pkill -f \"uvicorn interview.call_manager\")",
+      "Bash(uvicorn interview.call_manager:app --port 8000 --log-level info)",
+      "Bash(curl -s -X POST http://localhost:8000/call-status -d 'CallStatus=completed&CallSid=CA_TEST123' -H 'Content-Type: application/x-www-form-urlencoded' -w '\\\\nHTTP:%{http_code}')",
+      "Bash(curl -s http://localhost:8000/twiml)",
+      "Bash(python3 -c ' *)",
+      "Bash(echo \"Server PID: $!\")",
+      "Bash(curl -s http://localhost:4040/api/tunnels)",
+      "Bash(truncate -s 0 /tmp/uvicorn_sprint5.log)",
+      "Bash(pkill -f uvicorn)",
+      "Bash(timeout 15 uvicorn interview.call_manager:app --port 8000 --log-level debug)",
+      "Bash(curl -s http://localhost:4040/api/requests/http)",
+      "Bash(/Users/manishmehta/miniconda3/bin/python3 -c ' *)"
     ]
   }
 }

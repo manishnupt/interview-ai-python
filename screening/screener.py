@@ -1,8 +1,10 @@
 import json
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
 
+import openai
 from openai import OpenAI
 
 import config
@@ -51,15 +53,40 @@ CANDIDATE RESUME:
 
 Evaluate this candidate and return the JSON verdict.
 """
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
-            max_tokens=1000,
-            response_format={"type": "json_object"},
-        )
+        response = None
+        for attempt in range(3):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": _SYSTEM_PROMPT},
+                        {"role": "user", "content": user_message},
+                    ],
+                    max_tokens=1000,
+                    response_format={"type": "json_object"},
+                )
+                break
+            except openai.RateLimitError:
+                if attempt < 2:
+                    wait = 2 ** attempt
+                    print(f"[Screener] Rate limited, retrying in {wait}s...")
+                    time.sleep(wait)
+                else:
+                    raise
+            except openai.APITimeoutError:
+                if attempt < 2:
+                    print(f"[Screener] Timeout, retrying (attempt {attempt+2}/3)...")
+                else:
+                    raise
+            except openai.APIConnectionError:
+                if attempt < 2:
+                    print(f"[Screener] Connection error, retrying...")
+                    time.sleep(1)
+                else:
+                    raise
+
+        if response is None:
+            raise RuntimeError("Screener failed after 3 attempts")
 
         raw = response.choices[0].message.content
         parsed = json.loads(raw)

@@ -17,6 +17,7 @@ TWILIO_ACCOUNT_SID = _require("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = _require("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = _require("TWILIO_PHONE_NUMBER")
 DEEPGRAM_API_KEY = _require("DEEPGRAM_API_KEY")
+APP_BASE_URL = _require("APP_BASE_URL")
 GOOGLE_SHEET_ID = _require("GOOGLE_SHEET_ID")
 
 JOB_DESCRIPTION = """
@@ -60,4 +61,6 @@ When you have asked all questions, say exactly: INTERVIEW_COMPLETE
 if __name__ == "__main__":
     print("Config loaded successfully")
     print(f"Sheet ID: {GOOGLE_SHEET_ID}")
+    print(f"Twilio number: {TWILIO_PHONE_NUMBER}")
+    print(f"App base URL: {APP_BASE_URL}")
     print(f"JD preview: {JOB_DESCRIPTION[:80]}...")
