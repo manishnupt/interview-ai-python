@@ -6,6 +6,7 @@ from fastapi.responses import Response
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
 import config
+from interview.transcriber import Transcriber
 
 app = FastAPI()
 twilio_client = Client(config.TWILIO_ACCOUNT_SID, config.TWILIO_AUTH_TOKEN)
@@ -65,17 +66,19 @@ async def call_status(request: Request):
 
 @app.websocket("/media-stream")
 async def media_stream(websocket: WebSocket):
-    """
-    This is the core of the interview.
-    Twilio streams raw audio here as base64-encoded mulaw chunks.
-    We will wire Deepgram and ElevenLabs into this in Sprint 6 and 7.
-    For now we just log incoming audio to prove the connection works.
-    """
     await websocket.accept()
     print("[WebSocket] Twilio connected to media stream")
 
     stream_sid = None
     packet_count = 0
+    transcripts = []
+
+    async def on_transcript(text: str):
+        transcripts.append(text)
+        print(f"[Live] Candidate said: {text}")
+
+    transcriber = Transcriber(on_transcript=on_transcript)
+    await transcriber.connect()
 
     try:
         async for message in websocket.iter_text():
@@ -88,15 +91,18 @@ async def media_stream(websocket: WebSocket):
             elif event == "start":
                 stream_sid = data["start"]["streamSid"]
                 print(f"[WebSocket] Stream started — SID: {stream_sid}")
-                print(f"[WebSocket] Custom params: {data['start'].get('customParameters', {})}")
 
             elif event == "media":
                 packet_count += 1
-                if packet_count % 50 == 0:
-                    print(f"[WebSocket] Receiving audio... ({packet_count} packets)")
+                audio_payload = data["media"]["payload"]
+                audio_bytes = base64.b64decode(audio_payload)
+                await transcriber.send_audio(audio_bytes)
+
+                if packet_count % 100 == 0:
+                    print(f"[WebSocket] {packet_count} packets sent to Deepgram")
 
             elif event == "stop":
-                print(f"[WebSocket] Stream stopped. Total packets: {packet_count}")
+                print(f"[WebSocket] Stream stopped. Packets: {packet_count}")
                 break
 
     except WebSocketDisconnect:
@@ -104,7 +110,10 @@ async def media_stream(websocket: WebSocket):
     except Exception as e:
         print(f"[WebSocket] Error: {e}")
     finally:
-        print("[WebSocket] Media stream closed")
+        await transcriber.disconnect()
+        print(f"\n[Session] Full transcript ({len(transcripts)} utterances):")
+        for i, t in enumerate(transcripts, 1):
+            print(f"  {i}. {t}")
 
 
 if __name__ == "__main__":

@@ -18,7 +18,11 @@
       "Bash(pkill -f uvicorn)",
       "Bash(timeout 15 uvicorn interview.call_manager:app --port 8000 --log-level debug)",
       "Bash(curl -s http://localhost:4040/api/requests/http)",
-      "Bash(/Users/manishmehta/miniconda3/bin/python3 -c ' *)"
+      "Bash(/Users/manishmehta/miniconda3/bin/python3 -c ' *)",
+      "Bash(uvicorn interview.call_manager:app --host 0.0.0.0 --port 8000 --reload)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(> /tmp/uvicorn_deepgram.log)",
+      "Bash(xargs kill -9)"
     ]
   }
 }
