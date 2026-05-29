@@ -1,17 +1,20 @@
 import asyncio
 from deepgram import AsyncDeepgramClient
 from deepgram.core.events import EventType
-from deepgram.listen.v1.socket_client import ListenV1Results
+from deepgram.listen.v1.socket_client import ListenV1Results, ListenV1UtteranceEnd
 import config
 
 
 class Transcriber:
-    def __init__(self, on_transcript):
+    def __init__(self, on_transcript, on_interim=None):
         """
         on_transcript: async callback called with (text: str) for each final transcript.
+        on_interim: optional async callback called on any active interim — used to
+                    cancel debounce timers so the AI doesn't cut in mid-sentence.
         """
         self.client = AsyncDeepgramClient(api_key=config.DEEPGRAM_API_KEY)
         self.on_transcript = on_transcript
+        self.on_interim = on_interim
         self.connection = None
         self._ctx = None
         self._listen_task = None
@@ -28,8 +31,9 @@ class Transcriber:
             sample_rate=8000,
             channels=1,
             punctuate=True,
-            interim_results=False,
-            endpointing=500,
+            interim_results=True,
+            endpointing=600,
+            utterance_end_ms=1200,
         )
         self.connection = await self._ctx.__aenter__()
 
@@ -69,20 +73,31 @@ class Transcriber:
         return "\n".join(self._all_transcripts)
 
     async def _on_message(self, data):
-        """Fired for every WebSocket message. Only forward final transcripts with content."""
+        """Routes incoming Deepgram messages to the appropriate handler."""
+        if isinstance(data, ListenV1UtteranceEnd):
+            await self._on_utterance_end(data)
+            return
+
         if not isinstance(data, ListenV1Results):
             return
-        if not data.is_final:
-            return
+
         try:
+            is_final = data.is_final
             transcript = data.channel.alternatives[0].transcript
-            if transcript and transcript.strip():
+            if transcript and transcript.strip() and is_final:
                 text = transcript.strip()
                 self._all_transcripts.append(text)
-                print(f"[Deepgram] Transcript: {text}")
+                print(f"[Deepgram] Final: {text}")
                 await self.on_transcript(text)
+            elif transcript and not is_final:
+                print(f"[Deepgram] Interim: {transcript}", end="\r")
+                if self.on_interim:
+                    await self.on_interim()
         except Exception as e:
-            print(f"[Deepgram] Error parsing transcript: {e}")
+            print(f"[Deepgram] Parse error: {e}")
+
+    async def _on_utterance_end(self, data):
+        print("[Deepgram] Utterance end detected")
 
     async def _on_error(self, error):
         print(f"[Deepgram] Error: {error}")
