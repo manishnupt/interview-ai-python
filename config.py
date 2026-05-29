@@ -11,7 +11,7 @@ def _require(name: str) -> str:
     return value
 
 
-ANTHROPIC_API_KEY = _require("ANTHROPIC_API_KEY")
+OPENAI_API_KEY = _require("OPENAI_API_KEY")
 ELEVENLABS_API_KEY = _require("ELEVENLABS_API_KEY")
 TWILIO_ACCOUNT_SID = _require("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = _require("TWILIO_AUTH_TOKEN")

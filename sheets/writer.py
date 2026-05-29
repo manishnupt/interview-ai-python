@@ -43,7 +43,7 @@ class SheetWriter:
         row = candidate.sheet_row_index
         updates = [
             {"range": f"E{row}", "values": [["Screened"]]},
-            {"range": f"F{row}", "values": [[result.score]]},
+            {"range": f"F{row}", "values": [[f"{result.score}/10 ({result.match_percentage}%)"]]},
             {"range": f"G{row}", "values": [["Fit" if result.fit else "No Fit"]]},
             {"range": f"H{row}", "values": [[" | ".join(result.fit_reasons)]]},
             {"range": f"I{row}", "values": [[" | ".join(result.concerns)]]},
