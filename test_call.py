@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import sys
 import config
-from interview.call_manager import place_call
+from interview.dialer import place_call
 
 if __name__ == "__main__":
     phone = sys.argv[1] if len(sys.argv) > 1 else None

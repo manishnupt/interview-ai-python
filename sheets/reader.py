@@ -3,46 +3,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-
-import config
+from sheets.base import SheetBase
 from models.candidate import Candidate
 
-_SCOPES = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/drive",
-]
 
-
-class SheetReader:
-    def __init__(self):
-        try:
-            creds = ServiceAccountCredentials.from_json_keyfile_name(
-                "service_account.json", _SCOPES
-            )
-        except FileNotFoundError:
-            print("[SheetReader] ERROR: service_account.json not found — add it to the project root.")
-            raise
-
-        try:
-            client = gspread.authorize(creds)
-            self._sheet = client.open_by_key(config.GOOGLE_SHEET_ID).sheet1
-        except gspread.exceptions.SpreadsheetNotFound:
-            print(
-                f"[SheetReader] ERROR: Sheet not found — verify GOOGLE_SHEET_ID "
-                f"({config.GOOGLE_SHEET_ID}) and that the service account has viewer access."
-            )
-            raise
-        except gspread.exceptions.APIError as e:
-            print(f"[SheetReader] ERROR: Google Sheets API error — {e}")
-            raise
+class SheetReader(SheetBase):
 
     def get_pending_candidates(self) -> list[Candidate]:
         """Return candidates whose Status column (col 5) is blank."""
         rows = self._sheet.get_all_values()
         candidates = []
-        for i, row in enumerate(rows[1:], start=2):  # skip header; row 2 = first data row
+        for i, row in enumerate(rows[1:], start=2):
             status = row[4].strip() if len(row) > 4 else ""
             if status:
                 continue

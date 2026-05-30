@@ -1,4 +1,3 @@
-import io
 try:
     import audioop
 except ModuleNotFoundError:
@@ -16,15 +15,6 @@ class VoiceSynthesiser:
         self._filler_audio: bytes = None
 
     def text_to_mulaw(self, text: str) -> bytes:
-        """
-        Converts text to mulaw 8000Hz audio bytes.
-        Twilio expects mulaw encoded audio at 8kHz.
-
-        Steps:
-        1. Call ElevenLabs with Flash model requesting PCM at 8kHz
-        2. Convert PCM → mulaw using audioop
-        3. Return raw mulaw bytes ready for Twilio
-        """
         print(f"[ElevenLabs] Synthesising: {text[:60]}...")
 
         audio_generator = self.client.text_to_speech.convert(
@@ -42,16 +32,10 @@ class VoiceSynthesiser:
 
         pcm_bytes = b"".join(audio_generator)
         mulaw_bytes = audioop.lin2ulaw(pcm_bytes, 2)
-
         print(f"[ElevenLabs] Generated {len(mulaw_bytes)} bytes of audio")
         return mulaw_bytes
 
     def get_filler_audio(self) -> bytes:
-        """
-        Pre-generated filler audio: "Let me think about that for a moment."
-        Generated once and cached. Played while GPT is thinking
-        to prevent awkward silence on the call.
-        """
         if self._filler_audio is None:
             print("[ElevenLabs] Pre-generating filler audio...")
             self._filler_audio = self.text_to_mulaw(
@@ -60,11 +44,6 @@ class VoiceSynthesiser:
         return self._filler_audio
 
     def chunk_audio(self, mulaw_bytes: bytes, chunk_size: int = 3200) -> list[bytes]:
-        """
-        Splits audio into chunks for streaming to Twilio.
-        3200 bytes = 200ms of audio at 8kHz mulaw.
-        Smaller chunks = lower latency but more WebSocket messages.
-        """
         return [
             mulaw_bytes[i:i + chunk_size]
             for i in range(0, len(mulaw_bytes), chunk_size)

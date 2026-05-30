@@ -13,12 +13,24 @@ def _require(name: str) -> str:
 
 OPENAI_API_KEY = _require("OPENAI_API_KEY")
 ELEVENLABS_API_KEY = _require("ELEVENLABS_API_KEY")
-TWILIO_ACCOUNT_SID = _require("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = _require("TWILIO_AUTH_TOKEN")
-TWILIO_PHONE_NUMBER = _require("TWILIO_PHONE_NUMBER")
 DEEPGRAM_API_KEY = _require("DEEPGRAM_API_KEY")
 APP_BASE_URL = _require("APP_BASE_URL")
 GOOGLE_SHEET_ID = _require("GOOGLE_SHEET_ID")
+
+# "twilio" or "plivo" — controls which provider is loaded at startup
+CALL_PROVIDER = os.environ.get("CALL_PROVIDER", "twilio")
+
+# Twilio — required when CALL_PROVIDER=twilio
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_PHONE_NUMBER = os.environ.get("TWILIO_PHONE_NUMBER", "")
+
+# Plivo — required when CALL_PROVIDER=plivo
+PLIVO_AUTH_ID = os.environ.get("PLIVO_AUTH_ID", "")
+PLIVO_AUTH_TOKEN = os.environ.get("PLIVO_AUTH_TOKEN", "")
+PLIVO_PHONE_NUMBER = os.environ.get("PLIVO_PHONE_NUMBER", "")
+
+SCREENING_FIT_THRESHOLD = int(os.environ.get("SCREENING_FIT_THRESHOLD", 3))
 
 JOB_DESCRIPTION = """
 Role: Backend Software Engineer

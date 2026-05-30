@@ -46,12 +46,12 @@ class Transcriber:
         print("[Deepgram] Connected to streaming STT")
 
     async def send_audio(self, audio_bytes: bytes):
-        """Send a raw audio chunk to Deepgram. Called for every Twilio media packet."""
+        """Send a raw audio chunk to Deepgram. Auto-reconnects if the connection dropped."""
+        if not self.is_connected:
+            print("[Deepgram] Reconnecting after idle timeout...")
+            await self.connect()
         if self.is_connected and self.connection:
             await self.connection.send_media(audio_bytes)
-        elif not self._warned_not_connected:
-            print("[Deepgram] Warning — audio received but not connected")
-            self._warned_not_connected = True
 
     async def disconnect(self):
         """Cleanly close the Deepgram connection."""

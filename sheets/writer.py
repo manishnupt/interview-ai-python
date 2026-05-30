@@ -4,40 +4,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-
-import config
+from sheets.base import SheetBase
 from models.candidate import Candidate
 from models.result import ScreeningResult, InterviewReport
 
-_SCOPES = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/drive",
-]
 
-
-class SheetWriter:
-    def __init__(self):
-        try:
-            creds = ServiceAccountCredentials.from_json_keyfile_name(
-                "service_account.json", _SCOPES
-            )
-        except FileNotFoundError:
-            print("[SheetWriter] ERROR: service_account.json not found — add it to the project root.")
-            raise
-
-        try:
-            client = gspread.authorize(creds)
-            self._sheet = client.open_by_key(config.GOOGLE_SHEET_ID).sheet1
-        except gspread.exceptions.SpreadsheetNotFound:
-            print(
-                f"[SheetWriter] ERROR: Sheet not found — verify GOOGLE_SHEET_ID "
-                f"({config.GOOGLE_SHEET_ID}) and that the service account has editor access."
-            )
-            raise
-        except gspread.exceptions.APIError as e:
-            print(f"[SheetWriter] ERROR: Google Sheets API error — {e}")
-            raise
+class SheetWriter(SheetBase):
 
     def write_screening(self, candidate: Candidate, result: ScreeningResult) -> None:
         row = candidate.sheet_row_index
@@ -64,9 +36,8 @@ class SheetWriter:
         print(f"[Sheet] Written interview report for {candidate.name}")
 
     def reset_all(self) -> int:
-        """Clear columns E-M for every data row. Returns the number of rows cleared."""
         rows = self._sheet.get_all_values()
-        data_rows = rows[1:]  # skip header
+        data_rows = rows[1:]
         if not data_rows:
             return 0
         updates = []

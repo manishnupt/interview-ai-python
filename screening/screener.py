@@ -91,9 +91,9 @@ Evaluate this candidate and return the JSON verdict.
         raw = response.choices[0].message.content
         parsed = json.loads(raw)
 
-        fit = parsed["fit"]
         score = parsed["score"]
         match_percentage = parsed["match_percentage"]
+        fit = score >= config.SCREENING_FIT_THRESHOLD
 
         print(f"[Screener] Score: {score}/10 | Match: {match_percentage}% | Fit: {fit}")
 

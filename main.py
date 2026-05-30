@@ -10,6 +10,7 @@ from sheets.writer import SheetWriter
 from screening.pdf_parser import PDFParser
 from screening.screener import Screener
 from models.candidate import Candidate
+from interview.dialer import place_call
 from config import JOB_DESCRIPTION
 
 
@@ -71,9 +72,15 @@ def main() -> None:
 
             if result.fit:
                 print(f"[✓ FIT] {candidate.name} — Score: {result.score}/10 | {result.match_percentage}% match")
-                print(f"  → Queued for interview")
                 fit_count += 1
                 log_lines.append(f"{candidate.name} | Score: {result.score}/10 | {result.match_percentage}% | Fit")
+                if not candidate.phone:
+                    print(f"  → No phone number — skipping call")
+                    writer.mark_status(candidate, "No Phone")
+                else:
+                    place_call(candidate.phone, candidate.name)
+                    writer.mark_status(candidate, "Interview Scheduled")
+                    print(f"  → Call initiated to {candidate.phone}")
             else:
                 print(f"[✗ NO FIT] {candidate.name} — Score: {result.score}/10 | {result.match_percentage}% match")
                 print(f"  → Rejected")
