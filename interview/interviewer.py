@@ -9,6 +9,25 @@ class Interviewer:
         job_description: str,
         candidate_name: str = "there"
     ):
+        """
+        Initialises the Interviewer for a single call session.
+
+        Args:
+            resume_text:     Full text of the candidate's resume.
+            job_description: The job description to interview against.
+            candidate_name:  Candidate's name used in the opening greeting.
+                             Defaults to "there" if not provided.
+
+        State:
+            conversation_history  — running list of GPT messages (user/assistant turns).
+            question_count        — number of questions asked so far (max 5).
+            is_complete           — set to True when the interview ends.
+            interview_started     — False until the candidate confirms availability.
+            covered_topics        — short topic labels extracted after each question,
+                                    fed back into the system prompt to prevent repeats.
+            _last_filler_index    — tracks the last filler used so the same one is
+                                    never played twice in a row.
+        """
         self.client = OpenAI(api_key=config.OPENAI_API_KEY)
         self.model = "gpt-4o-mini"
         self.resume_text = resume_text
@@ -22,6 +41,12 @@ class Interviewer:
         self.covered_topics = []
 
     def get_opening_message(self) -> str:
+        """
+        Returns the fixed first line spoken when the call connects.
+        Confirms the right person answered, frames the call as a
+        telephonic interview round, and asks for availability consent
+        before starting. Hardcoded for speed and consistency.
+        """
         return (
             f"Hello, am I speaking with {self.candidate_name}? "
             "This is a telephonic interview round for the job post "
@@ -31,10 +56,18 @@ class Interviewer:
 
     def handle_availability_response(self, text: str) -> str:
         """
-        Called after the opening message to check if
-        the candidate confirmed availability.
-        Returns the first interview question if yes,
-        or a polite goodbye if no.
+        Routes the candidate's first reply after the opening greeting.
+
+        Checks for positive or negative availability signals using keyword
+        lists that cover English and common Hindi responses. Evaluated in
+        this order to avoid false positives:
+          1. Negative match  → sets is_complete, returns a goodbye.
+          2. Positive match  → sets interview_started, generates and
+                               returns the first interview question.
+          3. No match        → asks the candidate to repeat themselves.
+
+        Called by call_manager before interview_started is True.
+        All subsequent replies go to generate_response() instead.
         """
         text_lower = text.lower().strip()
 
@@ -72,6 +105,21 @@ class Interviewer:
         )
 
     def _build_system_prompt(self) -> str:
+        """
+        Builds the GPT system prompt dynamically before each API call.
+
+        Injects three live values so the prompt stays accurate across turns:
+          - covered_topics: 3-word labels of topics already asked, so GPT
+            can avoid repeating them.
+          - job_description: full JD text to drive question selection.
+          - resume_text: first 3000 chars of the resume to calibrate
+            question difficulty against candidate experience.
+
+        The prompt instructs GPT to follow a 5-step question selection
+        process (read JD → read resume → find gap → pick uncovered topic →
+        ask calibrated question) and rotate across five question types
+        (Concept, Situational, Design, Trade-off, Tool-specific).
+        """
         asked_summary = (
             "\n".join(f"- {t}" for t in self.covered_topics)
             if self.covered_topics else "None yet"
@@ -154,8 +202,13 @@ Questions asked so far: {self.question_count} of 5
 
     def _generate_first_question(self) -> str:
         """
-        Generates the first question separately so it
-        uses candidate experience level to set the right tone.
+        Generates the warm-up opening question for the interview.
+
+        Called once by handle_availability_response() after the candidate
+        confirms they are available. Uses a separate user prompt that
+        explicitly requests an open-ended background question, so the first
+        turn always feels like a natural conversation starter rather than a
+        deep technical question.
         """
         response = self.client.chat.completions.create(
             model=self.model,
@@ -180,6 +233,15 @@ Questions asked so far: {self.question_count} of 5
         return response.choices[0].message.content.strip()
 
     def _generate_next_question(self) -> str:
+        """
+        Generates a replacement question when the candidate signals they
+        don't know the answer (detected by is_dont_know_response()).
+
+        Passes the full conversation history alongside the system prompt so
+        GPT knows which topics have already been attempted, then explicitly
+        asks for a question on a different topic. Temperature is set to 0.8
+        (slightly higher than the main flow) to encourage variety.
+        """
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -203,6 +265,14 @@ Questions asked so far: {self.question_count} of 5
         return response.choices[0].message.content.strip()
 
     def _extract_topic(self, question: str) -> str:
+        """
+        Extracts a 3-word-or-less topic label from a generated question.
+
+        Called immediately after each question is produced in generate_response().
+        The label is appended to covered_topics and injected into the next
+        system prompt under "QUESTIONS ALREADY ASKED" so GPT never revisits
+        the same area. Uses temperature=0 for deterministic, consistent labels.
+        """
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -222,6 +292,14 @@ Questions asked so far: {self.question_count} of 5
         return response.choices[0].message.content.strip().lower()
 
     def _get_filler(self) -> str:
+        """
+        Returns a short acknowledgement phrase to play before each question.
+
+        Picks randomly from a pool of 10 fillers but excludes the one used
+        on the previous turn (_last_filler_index) so the same phrase is never
+        heard twice in a row. Gives the interview a more natural, human-paced
+        rhythm without repeating verbal tics.
+        """
         import random
         fillers = [
             "Okay.",
@@ -244,6 +322,16 @@ Questions asked so far: {self.question_count} of 5
         return filler
 
     def is_dont_know_response(self, text: str) -> bool:
+        """
+        Returns True if the candidate's reply signals they don't know
+        or want to skip the current question.
+
+        Matches against a phrase list covering English expressions of
+        uncertainty and Hindi equivalents (nahi pata, yaad nahi, etc.).
+        Checked at the top of generate_response() before is_sufficient_answer(),
+        because skip phrases like "pass" or "no idea" are short and would
+        otherwise be rejected by the word-count gate.
+        """
         text_lower = text.lower().strip()
 
         phrases = [
@@ -261,6 +349,16 @@ Questions asked so far: {self.question_count} of 5
         return any(phrase in text_lower for phrase in phrases)
 
     def is_sufficient_answer(self, text: str) -> bool:
+        """
+        Returns True if the candidate's reply is substantive enough to
+        warrant generating the next interview question.
+
+        Requires at least 5 total words AND at least 4 non-filler words.
+        The filler set catches one-word acknowledgements ("yes", "okay",
+        "hmm") that Deepgram occasionally emits mid-answer. Returning False
+        causes generate_response() to ask the candidate to elaborate rather
+        than counting the turn as a completed answer.
+        """
         words = text.split()
         if len(words) < 5:
             return False
@@ -271,10 +369,27 @@ Questions asked so far: {self.question_count} of 5
 
     def generate_response(self, candidate_utterance: str) -> str:
         """
-        Given what the candidate just said, decide what the interviewer says next.
+        Main response loop — decides what the interviewer says after each
+        candidate answer during the live interview.
 
-        Returns the text response to speak.
-        Sets self.is_complete = True when GPT signals INTERVIEW_COMPLETE.
+        Decision order:
+          1. is_dont_know_response() → play a skip filler, call
+             _generate_next_question(), and move on. Increments
+             question_count without adding the skipped turn to history.
+          2. is_sufficient_answer() → if the reply is too short, ask the
+             candidate to elaborate. Does not increment question_count.
+          3. Normal flow → append candidate turn to conversation_history,
+             increment question_count, call GPT, prepend a filler phrase,
+             extract and record the topic, append the reply to history.
+
+        Signals end of interview:
+          - If GPT returns INTERVIEW_COMPLETE, sets is_complete = True and
+            strips the sentinel before returning the closing line.
+          - If question_count reaches 5 on a skip, sets is_complete = True
+            and returns a closing message directly.
+
+        The caller (call_manager) checks is_complete after each call and
+        hangs up the call with a short delay if True.
         """
         if self.is_dont_know_response(candidate_utterance):
             import random
@@ -356,8 +471,14 @@ Questions asked so far: {self.question_count} of 5
 
     def get_full_transcript(self) -> str:
         """
-        Returns the full conversation as a readable transcript
-        for the reporter to generate the final score and summary.
+        Returns the full conversation as a human-readable transcript.
+
+        Formats every turn in conversation_history as "Interviewer: ..."
+        or "Candidate: ..." joined by blank lines. Called at the end of
+        the WebSocket session in call_manager and passed to the reporter
+        module to generate the final candidate score and summary.
+        Note: the availability exchange is not part of conversation_history
+        and will not appear in the transcript.
         """
         lines = []
         for msg in self.conversation_history:
