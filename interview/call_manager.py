@@ -75,7 +75,7 @@ async def media_stream(websocket: WebSocket):
             full_utterance = " ".join(transcript_buffer)
             transcript_buffer.clear()
 
-            if len(full_utterance.split()) < 5:
+            if interviewer.interview_started and len(full_utterance.split()) < 5:
                 print(f"[Interview] Too short, waiting: '{full_utterance}'")
                 return
 
@@ -86,7 +86,12 @@ async def media_stream(websocket: WebSocket):
                 if interviewer.is_complete:
                     return
 
-                response_text = interviewer.generate_response(full_utterance)
+                if not interviewer.interview_started:
+                    response_text = interviewer.handle_availability_response(
+                        full_utterance
+                    )
+                else:
+                    response_text = interviewer.generate_response(full_utterance)
                 response_audio = synth.text_to_mulaw(response_text)
                 await send_audio_to_provider(response_audio)
 
@@ -106,11 +111,7 @@ async def media_stream(websocket: WebSocket):
     job_description = config.JOB_DESCRIPTION
     synth = VoiceSynthesiser()
     synth.get_filler_audio()
-
-    interviewer = Interviewer(
-        resume_text=resume_text,
-        job_description=job_description
-    )
+    interviewer = None
 
     async def on_interim():
         if response_task and not response_task.done():
@@ -130,7 +131,16 @@ async def media_stream(websocket: WebSocket):
                 start_data = data["start"]
                 stream_sid = provider.extract_stream_sid(start_data)
                 call_id = provider.extract_call_id(start_data)
-                print(f"[WebSocket] Stream started — SID: {stream_sid} | Call: {call_id}")
+                candidate_name = (
+                    start_data.get("customParameters", {}).get("candidate_name")
+                    or websocket.query_params.get("candidate_name", "there")
+                )
+                interviewer = Interviewer(
+                    resume_text=resume_text,
+                    job_description=job_description,
+                    candidate_name=candidate_name
+                )
+                print(f"[WebSocket] Stream started — SID: {stream_sid} | Call: {call_id} | Candidate: {candidate_name}")
 
                 async def send_opening():
                     import time
