@@ -32,6 +32,10 @@ PLIVO_PHONE_NUMBER = os.environ.get("PLIVO_PHONE_NUMBER", "")
 
 SCREENING_FIT_THRESHOLD = int(os.environ.get("SCREENING_FIT_THRESHOLD", 3))
 
+# Platform API / Spring Boot integration
+SPRING_BOOT_URL = os.environ.get("SPRING_BOOT_URL", "http://localhost:8080")
+PLATFORM_API_PORT = int(os.environ.get("PLATFORM_API_PORT", "8001"))
+
 JOB_DESCRIPTION = """
 Role: Backend Software Engineer
 Experience: 3+ years
@@ -75,4 +79,6 @@ if __name__ == "__main__":
     print(f"Sheet ID: {GOOGLE_SHEET_ID}")
     print(f"Twilio number: {TWILIO_PHONE_NUMBER}")
     print(f"App base URL: {APP_BASE_URL}")
+    print(f"Spring Boot URL: {SPRING_BOOT_URL}")
+    print(f"Platform API port: {PLATFORM_API_PORT}")
     print(f"JD preview: {JOB_DESCRIPTION[:80]}...")

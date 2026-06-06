@@ -23,7 +23,18 @@
       "Bash(echo \"PID: $!\")",
       "Bash(> /tmp/uvicorn_deepgram.log)",
       "Bash(xargs kill -9)",
-      "WebFetch(domain:www.plivo.com)"
+      "WebFetch(domain:www.plivo.com)",
+      "Bash(git -C /Users/manishmehta/Desktop/ai-codegen status)",
+      "Bash(git -C /Users/manishmehta/Desktop/ai-codegen diff)",
+      "Bash(git -C /Users/manishmehta/Desktop/ai-codegen log --oneline -5)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(xargs ls)",
+      "Bash(curl -s http://localhost:8001/health)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -X POST http://localhost:8001/screen -H 'Content-Type: application/json' -d '{ *)",
+      "Bash(curl -s -o /tmp/test_resume.pdf \"https://www.africau.edu/images/default/sample.pdf\")",
+      "Bash(curl *)"
     ]
   }
 }

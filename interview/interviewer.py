@@ -37,21 +37,118 @@ class Interviewer:
         self.question_count = 0
         self.is_complete = False
         self.interview_started = False
+        self.identity_confirmed = False
+        self.reschedule_pending = False
         self._last_filler_index = -1
         self.covered_topics = []
+        self._last_question = ""
 
     def get_opening_message(self) -> str:
-        """
-        Returns the fixed first line spoken when the call connects.
-        Confirms the right person answered, frames the call as a
-        telephonic interview round, and asks for availability consent
-        before starting. Hardcoded for speed and consistency.
-        """
+        """First turn: confirm we have the right person."""
+        return f"Hello, am I speaking with {self.candidate_name}?"
+
+    def get_availability_question(self) -> str:
+        """Second turn: frame the call and ask for availability."""
         return (
-            f"Hello, am I speaking with {self.candidate_name}? "
-            "This is a telephonic interview round for the job post "
-            "you applied for. "
-            "Is this a good time to speak for about 10 minutes?"
+            "Great. This is a telephonic interview round for the job post "
+            "you applied for. Is this a good time to speak for about 10 minutes?"
+        )
+
+    def handle_identity_response(self, text: str) -> str:
+        """
+        Routes the candidate's reply to the identity question.
+        Positive → sets identity_confirmed, returns the availability question.
+        Negative → sets is_complete, returns a polite goodbye.
+        Unclear  → asks them to confirm again.
+        """
+        text_lower = text.lower().strip()
+
+        positive = [
+            "yes", "yeah", "yep", "yup", "speaking", "this is",
+            "that's me", "thats me", "i am", "i'm", "haan", "han", "ji"
+        ]
+        negative = [
+            "no", "wrong number", "not", "nahi", "nhi"
+        ]
+
+        if any(word in text_lower for word in negative):
+            self.is_complete = True
+            return "I'm sorry for the confusion. Have a good day."
+
+        if any(word in text_lower for word in positive):
+            self.identity_confirmed = True
+            return self.get_availability_question()
+
+        return f"Sorry, I just want to confirm — am I speaking with {self.candidate_name}?"
+
+    _REPEAT_PHRASES = [
+        "repeat", "say that again", "come again", "pardon", "what was that",
+        "didn't catch", "didn't hear", "couldn't hear", "didn't get",
+        "didn't understand", "don't understand", "not clear", "not getting",
+        "can you say", "could you say", "what did you say", "say again",
+        "once more", "one more time",
+        "phir se", "dobara", "ek baar", "samajh nahi", "sunayi nahi",
+    ]
+
+    def is_repeat_request(self, text: str) -> bool:
+        t = text.lower()
+        return any(p in t for p in self._REPEAT_PHRASES)
+
+    _RESCHEDULE_KEYWORDS = [
+        "reschedule", "re-schedule", "call back", "call me back",
+        "another time", "different time", "some other time", "other time",
+        "not a good time", "bad time", "busy", "schedule later",
+        "convenient time", "baad mein", "baad me", "phir karo",
+    ]
+
+    def _is_reschedule_request(self, text: str) -> bool:
+        t = text.lower()
+        return any(k in t for k in self._RESCHEDULE_KEYWORDS)
+
+    _TIME_WORDS = [
+        "today", "tomorrow", "yesterday", "monday", "tuesday", "wednesday",
+        "thursday", "friday", "saturday", "sunday", "morning", "afternoon",
+        "evening", "night", "next", "week", "month", "am", "pm", "o'clock",
+        "kal", "parso", "aaj", "subah", "shaam", "hour", "minute",
+    ]
+
+    def _extract_time(self, text: str) -> str:
+        """Pull the time/date phrase the candidate proposed for rescheduling."""
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{
+                "role": "user",
+                "content": (
+                    "The candidate was asked when they want to reschedule an interview. "
+                    f"They replied: '{text}'. "
+                    "Extract the time or date they are proposing (even if phrased as a question). "
+                    "Return only the time/date phrase (e.g. 'day after tomorrow', '3pm Monday'). "
+                    "If there is truly no time at all, return an empty string."
+                ),
+            }],
+            max_tokens=20,
+            temperature=0,
+        )
+        result = response.choices[0].message.content.strip().strip('"').strip("'")
+
+        # Fallback: if GPT missed it but the text has obvious time words, clean and use it
+        if not result and any(w in text.lower() for w in self._TIME_WORDS):
+            import re
+            result = re.sub(r'[^\w\s]', '', text).strip()
+
+        return result
+
+    def _confirm_reschedule(self, time_phrase: str) -> str:
+        self.is_complete = True
+        self.reschedule_pending = False
+        if time_phrase:
+            return (
+                f"Sure, we will schedule your interview for {time_phrase}. "
+                "Our team will send you a confirmation. Have a great day."
+            )
+        return (
+            "Noted. Our team will reach out to find a convenient time for you. "
+            "Have a great day."
         )
 
     def handle_availability_response(self, text: str) -> str:
@@ -69,7 +166,20 @@ class Interviewer:
         Called by call_manager before interview_started is True.
         All subsequent replies go to generate_response() instead.
         """
+        # Waiting for the candidate to give a reschedule time
+        if self.reschedule_pending:
+            time_phrase = self._extract_time(text)
+            return self._confirm_reschedule(time_phrase)
+
         text_lower = text.lower().strip()
+
+        # Reschedule request (with or without a time)
+        if self._is_reschedule_request(text):
+            time_phrase = self._extract_time(text)
+            if time_phrase:
+                return self._confirm_reschedule(time_phrase)
+            self.reschedule_pending = True
+            return "Of course. What time would be convenient for you?"
 
         positive = [
             "yes", "yeah", "sure", "okay", "ok", "yep",
@@ -79,24 +189,21 @@ class Interviewer:
             "han", "bilkul", "theek", "theek hai"
         ]
         negative = [
-            "no", "busy", "not now", "bad time", "later",
-            "cant", "cannot", "call back", "not a good",
+            "no", "not now", "later", "cant", "cannot",
             "nahi", "nhi", "abhi nahi"
         ]
 
-        is_negative = any(word in text_lower for word in negative)
-        is_positive = any(word in text_lower for word in positive)
-
-        if is_negative:
+        if any(word in text_lower for word in negative):
             self.is_complete = True
             return (
                 "No problem at all. We will reach out to schedule "
                 "at a more convenient time. Have a good day."
             )
 
-        if is_positive:
+        if any(word in text_lower for word in positive):
             self.interview_started = True
             first_question = self._generate_first_question()
+            self._last_question = first_question
             return f"Perfect. Let us get started. {first_question}"
 
         return (
@@ -391,6 +498,25 @@ Questions asked so far: {self.question_count} of 5
         The caller (call_manager) checks is_complete after each call and
         hangs up the call with a short delay if True.
         """
+        # Repeat request — replay the last question without consuming a turn
+        if self.is_repeat_request(candidate_utterance):
+            print(f"[Interviewer] Candidate asked to repeat")
+            if self._last_question:
+                return f"Of course. {self._last_question}"
+            return "Sorry about that. Could you let me know which part was unclear?"
+
+        # Reschedule request mid-interview
+        if self.reschedule_pending:
+            time_phrase = self._extract_time(candidate_utterance)
+            return self._confirm_reschedule(time_phrase)
+
+        if self._is_reschedule_request(candidate_utterance):
+            time_phrase = self._extract_time(candidate_utterance)
+            if time_phrase:
+                return self._confirm_reschedule(time_phrase)
+            self.reschedule_pending = True
+            return "Of course. What time would be convenient for you?"
+
         if self.is_dont_know_response(candidate_utterance):
             import random
             self.question_count += 1
@@ -431,7 +557,15 @@ Questions asked so far: {self.question_count} of 5
             {
                 "role": "system",
                 "content": self._build_system_prompt()
-            }
+            },
+            {
+                "role": "system",
+                "content": (
+                    "If the candidate's last reply is completely unrelated to "
+                    "the interview (jokes, personal chat, off-topic questions), "
+                    "respond with exactly: OFF_TOPIC"
+                ),
+            },
         ] + self.conversation_history
 
         response = self.client.chat.completions.create(
@@ -442,6 +576,19 @@ Questions asked so far: {self.question_count} of 5
         )
 
         raw_question = response.choices[0].message.content.strip()
+
+        if raw_question.strip() == "OFF_TOPIC":
+            self.question_count -= 1  # undo the increment — turn doesn't count
+            self.conversation_history.pop()  # remove the off-topic utterance
+            import random
+            redirects = [
+                "Let's stay on track — please go ahead and answer the question.",
+                "Let's keep focused on the interview. Please answer the question.",
+                "I appreciate that, but let's stick to the interview. Go ahead.",
+            ]
+            reply = random.choice(redirects)
+            print(f"[Interviewer] Off-topic response detected — redirecting")
+            return reply
 
         if "INTERVIEW_COMPLETE" in raw_question:
             self.is_complete = True
@@ -456,6 +603,7 @@ Questions asked so far: {self.question_count} of 5
         else:
             filler = self._get_filler()
             reply = f"{filler} {raw_question}"
+            self._last_question = raw_question
 
             topic = self._extract_topic(raw_question)
             self.covered_topics.append(topic)

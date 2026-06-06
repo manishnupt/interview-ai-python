@@ -12,6 +12,12 @@ provider = get_provider()
 app = FastAPI()
 app.include_router(provider.router)
 
+# Keyed by call_sid — populated by dialer.place_call() before the WebSocket connects
+active_call_data: dict = {}
+
+# Keyed by call_sid — populated when an interview finishes, polled by platform_api
+interview_reports: dict = {}
+
 
 @app.websocket("/media-stream")
 async def media_stream(websocket: WebSocket):
@@ -65,7 +71,8 @@ async def media_stream(websocket: WebSocket):
         async def delayed_response():
             nonlocal ai_is_speaking, cooldown_until
             try:
-                await asyncio.sleep(1.0)
+                debounce = 1.0 if interviewer and interviewer.interview_started else 0.8
+                await asyncio.sleep(debounce)
             except asyncio.CancelledError:
                 return
 
@@ -86,24 +93,32 @@ async def media_stream(websocket: WebSocket):
                 if interviewer.is_complete:
                     return
 
-                if not interviewer.interview_started:
+                if not interviewer.identity_confirmed:
+                    response_text = interviewer.handle_identity_response(
+                        full_utterance
+                    )
+                elif not interviewer.interview_started:
                     response_text = interviewer.handle_availability_response(
                         full_utterance
                     )
                 else:
                     response_text = interviewer.generate_response(full_utterance)
-                response_audio = synth.text_to_mulaw(response_text)
+                response_audio = audio_cache.pop(response_text, None) or synth.text_to_mulaw(response_text)
                 await send_audio_to_provider(response_audio)
 
                 if interviewer.is_complete:
-                    print("[Interview] Interview complete — closing call")
-                    await asyncio.sleep(2)
+                    # Wait for audio to finish playing: streaming runs 4x real-time,
+                    # so remaining playback = 3/4 of total duration + buffer.
+                    playback_remaining = (len(response_audio) / 8000) * 0.75 + 0.8
+                    print(f"[Interview] Interview complete — waiting {playback_remaining:.1f}s for audio to finish")
+                    await asyncio.sleep(playback_remaining)
                     provider.end_call(call_id)
             finally:
                 import time
                 ai_is_speaking = False
-                cooldown_until = time.time() + 1.2
-                print("[Interview] AI finished speaking — 1.2s cooldown started")
+                cooldown = 0.3 if not interviewer.interview_started else 1.2
+                cooldown_until = time.time() + cooldown
+                print(f"[Interview] AI finished speaking — {cooldown}s cooldown started")
 
         response_task = asyncio.create_task(delayed_response())
 
@@ -112,6 +127,7 @@ async def media_stream(websocket: WebSocket):
     synth = VoiceSynthesiser()
     synth.get_filler_audio()
     interviewer = None
+    audio_cache: dict[str, bytes] = {}
 
     async def on_interim():
         if response_task and not response_task.done():
@@ -135,6 +151,11 @@ async def media_stream(websocket: WebSocket):
                     start_data.get("customParameters", {}).get("candidate_name")
                     or websocket.query_params.get("candidate_name", "there")
                 )
+                call_data = active_call_data.get(call_id, {})
+                if call_data.get("resume_text"):
+                    resume_text = call_data["resume_text"]
+                if call_data.get("job_description"):
+                    job_description = call_data["job_description"]
                 interviewer = Interviewer(
                     resume_text=resume_text,
                     job_description=job_description,
@@ -149,14 +170,23 @@ async def media_stream(websocket: WebSocket):
                     try:
                         opening = interviewer.get_opening_message()
                         opening_audio = synth.text_to_mulaw(opening)
+
+                        # Pre-synthesize availability question in a thread while opening streams
+                        loop = asyncio.get_event_loop()
+                        availability_text = interviewer.get_availability_question()
+                        prefetch = loop.run_in_executor(
+                            None, synth.text_to_mulaw, availability_text
+                        )
+
                         await send_audio_to_provider(opening_audio)
-                        print("[Interview] Opening message sent")
+                        audio_cache[availability_text] = await prefetch
+                        print("[Interview] Opening sent + availability audio pre-cached")
                     except Exception as e:
                         print(f"[Interview] ERROR in opening task: {e}")
                         raise
                     finally:
                         ai_is_speaking = False
-                        cooldown_until = time.time() + 1.2
+                        cooldown_until = time.time() + 0.3
 
                 asyncio.create_task(send_opening())
 

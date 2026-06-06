@@ -5,7 +5,7 @@ except ModuleNotFoundError:
 from elevenlabs.client import ElevenLabs as ElevenLabsClient
 import config
 
-VOICE_ID = "CwhRBWXzGAHq8TQ4Fs17"  # Roger — available on free plan; swap for Rachel (21m00Tcm4TlvDq8ikWAM) on paid plan
+VOICE_ID = "fPIfC3elMLbN9tNwMXkw"  # Roger — available on free plan; swap for Rachel (21m00Tcm4TlvDq8ikWAM) on paid plan
 MODEL_ID = "eleven_flash_v2_5"
 
 
