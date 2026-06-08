@@ -147,7 +147,6 @@ async def media_stream(websocket: WebSocket):
         async for message in websocket.iter_text():
             data = json.loads(message)
             event = data.get("event")
-            print(f"[WebSocket] Event received: '{event}' — t={time.time()-connect_time:.3f}s")
 
             if event == "connected":
                 print(f"[WebSocket] Stream connected — full data: {data}")
