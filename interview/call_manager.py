@@ -205,8 +205,30 @@ async def media_stream(websocket: WebSocket):
         raise
     finally:
         await transcriber.disconnect()
+        if interviewer is None:
+            return
+        transcript = interviewer.get_full_transcript()
         print("\n[Interview] Full transcript:")
-        print(interviewer.get_full_transcript())
+        print(transcript)
+
+        if interviewer.is_complete and call_id:
+            try:
+                from interview.reporter import Reporter
+                import asyncio as _asyncio
+                loop = _asyncio.get_event_loop()
+                reporter = Reporter()
+                report = await loop.run_in_executor(
+                    None,
+                    lambda: reporter.generate(
+                        transcript=transcript,
+                        resume_text=resume_text,
+                        job_description=job_description,
+                    )
+                )
+                interview_reports[call_id] = report
+                print(f"[Interview] Report stored for call_id: {call_id}")
+            except Exception as e:
+                print(f"[Interview] Failed to generate report: {e}")
 
 
 if __name__ == "__main__":

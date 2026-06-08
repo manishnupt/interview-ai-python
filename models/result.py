@@ -20,3 +20,4 @@ class InterviewReport:
     recommendation: str
     summary: str
     raw_json: str
+    full_transcript: str = ""
