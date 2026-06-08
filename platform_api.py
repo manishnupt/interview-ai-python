@@ -274,6 +274,12 @@ async def post_error_to_spring_boot(req, error: str):
             print(f"[Platform API] Error callback failed: {e}")
 
 
+# ── Mount call_manager routes (media-stream + provider webhooks) ─────────────
+# Must be added after platform_api routes so /screen, /interview, /health
+# take priority over the catch-all mount.
+from interview.call_manager import app as _cm_app
+app.mount("/", _cm_app)
+
 # ── Entry point ─────────────────────────────────────────
 
 if __name__ == "__main__":

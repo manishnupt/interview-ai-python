@@ -1,1 +1,1 @@
-web: uvicorn interview.call_manager:app --host 0.0.0.0 --port $PORT
+web: uvicorn platform_api:app --host 0.0.0.0 --port $PORT
