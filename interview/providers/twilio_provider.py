@@ -17,14 +17,22 @@ class TwilioProvider(CallProvider):
 
         @self._router.get("/twiml")
         async def twiml_handler(request: Request):
+            host = request.headers.get('host')
+            ws_url = f"wss://{host}/media-stream"
+            candidate_name = request.query_params.get("candidate_name", "Candidate")
+            print(f"[Twilio] TwiML request — host header: '{host}'")
+            print(f"[Twilio] TwiML WebSocket URL: '{ws_url}'")
+            print(f"[Twilio] TwiML candidate_name: '{candidate_name}'")
+            print(f"[Twilio] All request headers: {dict(request.headers)}")
             response = VoiceResponse()
             connect = Connect()
-            stream = Stream(url=f"wss://{request.headers.get('host')}/media-stream")
-            stream.parameter(name="candidate_name", value=request.query_params.get("candidate_name", "Candidate"))
+            stream = Stream(url=ws_url)
+            stream.parameter(name="candidate_name", value=candidate_name)
             connect.append(stream)
             response.append(connect)
-            print("[Twilio] TwiML served — connecting call to WebSocket")
-            return Response(content=str(response), media_type="application/xml")
+            twiml_str = str(response)
+            print(f"[Twilio] TwiML response body:\n{twiml_str}")
+            return Response(content=twiml_str, media_type="application/xml")
 
         @self._router.post("/call-status")
         async def call_status(request: Request):
@@ -32,7 +40,11 @@ class TwilioProvider(CallProvider):
             status = form.get("CallStatus", "unknown")
             sid = form.get("CallSid", "unknown")
             answered_by = form.get("AnsweredBy", "")
-            print(f"[Twilio] Call {sid[:12]}... status: {status}" + (f" (answered_by: {answered_by})" if answered_by else ""))
+            duration = form.get("CallDuration", "")
+            error_code = form.get("ErrorCode", "")
+            error_msg = form.get("ErrorMessage", "")
+            print(f"[Twilio] Call {sid[:12]}... status={status} answered_by={answered_by!r} duration={duration!r} error_code={error_code!r} error_msg={error_msg!r}")
+            print(f"[Twilio] Full call-status form: {dict(form)}")
             return Response(content="OK")
 
     @property

@@ -19,15 +19,19 @@ class PlivoProvider(CallProvider):
         async def plivo_answer(request: Request):
             candidate_name = request.query_params.get("candidate_name", "Candidate")
             host = request.headers.get("host")
+            ws_url = f"wss://{host}/media-stream?candidate_name={quote(candidate_name)}"
+            print(f"[Plivo] Answer request — host header: '{host}'")
+            print(f"[Plivo] WebSocket URL: '{ws_url}'")
+            print(f"[Plivo] All request headers: {dict(request.headers)}")
             xml = (
                 '<?xml version="1.0" encoding="UTF-8"?>'
                 "<Response>"
                 f'<Stream keepCallAlive="true" bidirectional="true" contentType="audio/x-mulaw;rate=8000">'
-                f"wss://{host}/media-stream?candidate_name={quote(candidate_name)}"
+                f"{ws_url}"
                 "</Stream>"
                 "</Response>"
             )
-            print("[Plivo] Answer XML served — connecting call to WebSocket")
+            print(f"[Plivo] Answer XML:\n{xml}")
             return Response(content=xml, media_type="application/xml")
 
         @self._router.post("/plivo-hangup")
@@ -35,7 +39,10 @@ class PlivoProvider(CallProvider):
             form = await request.form()
             call_uuid = form.get("CallUUID", "unknown")
             direction = form.get("Direction", "")
-            print(f"[Plivo] Call {call_uuid[:12]}... hung up (direction: {direction})")
+            hangup_cause = form.get("HangupCause", "")
+            hangup_source = form.get("HangupSource", "")
+            print(f"[Plivo] Hangup — UUID={call_uuid[:12]}... direction={direction!r} cause={hangup_cause!r} source={hangup_source!r}")
+            print(f"[Plivo] Full hangup form: {dict(form)}")
             return Response(content="OK")
 
     @property

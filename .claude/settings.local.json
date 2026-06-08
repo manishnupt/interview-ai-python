@@ -34,7 +34,8 @@
       "Bash(python3 -m json.tool)",
       "Bash(curl -s -X POST http://localhost:8001/screen -H 'Content-Type: application/json' -d '{ *)",
       "Bash(curl -s -o /tmp/test_resume.pdf \"https://www.africau.edu/images/default/sample.pdf\")",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(xargs ls -la)"
     ]
   }
 }

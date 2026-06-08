@@ -1,6 +1,8 @@
 import json
 import base64
 import asyncio
+import time
+import traceback
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import config
 from interview.providers import get_provider
@@ -21,8 +23,11 @@ interview_reports: dict = {}
 
 @app.websocket("/media-stream")
 async def media_stream(websocket: WebSocket):
+    connect_time = time.time()
+    print(f"[WebSocket] Incoming connection — headers: {dict(websocket.headers)}")
+    print(f"[WebSocket] Query params: {dict(websocket.query_params)}")
     await websocket.accept()
-    print("[WebSocket] Call connected — starting interview session")
+    print(f"[WebSocket] Accepted — t=0.000s")
 
     stream_sid = None
     call_id = None
@@ -125,7 +130,9 @@ async def media_stream(websocket: WebSocket):
     resume_text = ""
     job_description = config.JOB_DESCRIPTION
     synth = VoiceSynthesiser()
+    print(f"[WebSocket] Starting filler audio pre-gen — t={time.time()-connect_time:.3f}s")
     synth.get_filler_audio()
+    print(f"[WebSocket] Filler audio ready — t={time.time()-connect_time:.3f}s (NOTE: this was a blocking call)")
     interviewer = None
     audio_cache: dict[str, bytes] = {}
 
@@ -135,16 +142,19 @@ async def media_stream(websocket: WebSocket):
 
     transcriber = Transcriber(on_transcript=handle_transcript, on_interim=on_interim)
 
+    print(f"[WebSocket] Entering message loop — t={time.time()-connect_time:.3f}s")
     try:
         async for message in websocket.iter_text():
             data = json.loads(message)
             event = data.get("event")
+            print(f"[WebSocket] Event received: '{event}' — t={time.time()-connect_time:.3f}s")
 
             if event == "connected":
-                print("[WebSocket] Stream connected")
+                print(f"[WebSocket] Stream connected — full data: {data}")
 
             elif event == "start":
                 start_data = data["start"]
+                print(f"[WebSocket] START data: {json.dumps(start_data, indent=2)}")
                 stream_sid = provider.extract_stream_sid(start_data)
                 call_id = provider.extract_call_id(start_data)
                 candidate_name = (
@@ -152,6 +162,8 @@ async def media_stream(websocket: WebSocket):
                     or websocket.query_params.get("candidate_name", "there")
                 )
                 call_data = active_call_data.get(call_id, {})
+                print(f"[WebSocket] active_call_data keys: {list(active_call_data.keys())}")
+                print(f"[WebSocket] call_id lookup: '{call_id}' → found={bool(call_data)}")
                 if call_data.get("resume_text"):
                     resume_text = call_data["resume_text"]
                 if call_data.get("job_description"):
@@ -164,25 +176,34 @@ async def media_stream(websocket: WebSocket):
                 print(f"[WebSocket] Stream started — SID: {stream_sid} | Call: {call_id} | Candidate: {candidate_name}")
 
                 async def send_opening():
-                    import time
                     nonlocal ai_is_speaking, cooldown_until
+                    t0 = time.time()
+                    print(f"[Interview] send_opening() started — t={t0-connect_time:.3f}s from connect")
                     ai_is_speaking = True
                     try:
                         opening = interviewer.get_opening_message()
-                        opening_audio = synth.text_to_mulaw(opening)
+                        print(f"[Interview] Opening message: '{opening[:80]}...'")
 
-                        # Pre-synthesize availability question in a thread while opening streams
+                        print(f"[Interview] Calling ElevenLabs for opening TTS (BLOCKING) — t={time.time()-connect_time:.3f}s")
+                        opening_audio = synth.text_to_mulaw(opening)
+                        print(f"[Interview] Opening TTS done ({len(opening_audio)} bytes) — t={time.time()-connect_time:.3f}s")
+
                         loop = asyncio.get_event_loop()
                         availability_text = interviewer.get_availability_question()
+                        print(f"[Interview] Pre-fetching availability TTS in executor")
                         prefetch = loop.run_in_executor(
                             None, synth.text_to_mulaw, availability_text
                         )
 
+                        print(f"[Interview] Sending opening audio to provider — stream_sid={stream_sid}")
                         await send_audio_to_provider(opening_audio)
+                        print(f"[Interview] Opening audio sent — t={time.time()-connect_time:.3f}s")
+
                         audio_cache[availability_text] = await prefetch
                         print("[Interview] Opening sent + availability audio pre-cached")
                     except Exception as e:
                         print(f"[Interview] ERROR in opening task: {e}")
+                        traceback.print_exc()
                         raise
                     finally:
                         ai_is_speaking = False
@@ -195,13 +216,17 @@ async def media_stream(websocket: WebSocket):
                 await transcriber.send_audio(audio_bytes)
 
             elif event == "stop":
-                print("[WebSocket] Stream stopped")
+                print(f"[WebSocket] Stream stopped — t={time.time()-connect_time:.3f}s | full data: {data}")
                 break
 
+            else:
+                print(f"[WebSocket] Unknown event '{event}' — data: {data}")
+
     except WebSocketDisconnect:
-        print("[WebSocket] Call ended by candidate")
+        print(f"[WebSocket] WebSocketDisconnect at t={time.time()-connect_time:.3f}s")
     except Exception as e:
-        print(f"[WebSocket] Error: {e}")
+        print(f"[WebSocket] Unhandled exception at t={time.time()-connect_time:.3f}s: {e}")
+        traceback.print_exc()
         raise
     finally:
         await transcriber.disconnect()
