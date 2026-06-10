@@ -61,6 +61,9 @@ class Interviewer:
         Negative → sets is_complete, returns a polite goodbye.
         Unclear  → asks them to confirm again.
         """
+        if self.is_repeat_request(text):
+            return self.get_opening_message()
+
         text_lower = text.lower().strip()
 
         positive = [
@@ -99,6 +102,9 @@ class Interviewer:
         "another time", "different time", "some other time", "other time",
         "not a good time", "bad time", "busy", "schedule later",
         "convenient time", "baad mein", "baad me", "phir karo",
+        "driving", "in a meeting", "in a call", "on a call",
+        "can't talk", "cannot talk", "can't speak", "cannot speak",
+        "in traffic", "behind the wheel", "not free", "tied up",
     ]
 
     def _is_reschedule_request(self, text: str) -> bool:
@@ -168,8 +174,13 @@ class Interviewer:
         """
         # Waiting for the candidate to give a reschedule time
         if self.reschedule_pending:
+            if self.is_repeat_request(text):
+                return "Of course. What time would be convenient for you?"
             time_phrase = self._extract_time(text)
             return self._confirm_reschedule(time_phrase)
+
+        if self.is_repeat_request(text):
+            return self.get_availability_question()
 
         text_lower = text.lower().strip()
 
@@ -183,10 +194,9 @@ class Interviewer:
 
         positive = [
             "yes", "yeah", "sure", "okay", "ok", "yep",
-            "go ahead", "good time", "ready", "fine",
-            "absolutely", "of course", "please", "proceed",
-            "start", "begin", "lets go", "let's go", "haan",
-            "han", "bilkul", "theek", "theek hai"
+            "go ahead", "good time", "absolutely", "of course",
+            "lets go", "let's go", "haan", "han", "bilkul",
+            "theek", "theek hai"
         ]
         negative = [
             "no", "not now", "later", "cant", "cannot",
@@ -204,7 +214,12 @@ class Interviewer:
             self.interview_started = True
             first_question = self._generate_first_question()
             self._last_question = first_question
-            return f"Perfect. Let us get started. {first_question}"
+            opening_text = f"Perfect. Let us get started. {first_question}"
+            self.conversation_history.append({
+                "role": "assistant",
+                "content": opening_text,
+            })
+            return opening_text
 
         return (
             "Sorry, I missed that. "

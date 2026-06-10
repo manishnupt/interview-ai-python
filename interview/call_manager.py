@@ -130,9 +130,6 @@ async def media_stream(websocket: WebSocket):
     resume_text = ""
     job_description = config.JOB_DESCRIPTION
     synth = VoiceSynthesiser()
-    print(f"[WebSocket] Starting filler audio pre-gen — t={time.time()-connect_time:.3f}s")
-    synth.get_filler_audio()
-    print(f"[WebSocket] Filler audio ready — t={time.time()-connect_time:.3f}s (NOTE: this was a blocking call)")
     interviewer = None
     audio_cache: dict[str, bytes] = {}
 
@@ -183,9 +180,13 @@ async def media_stream(websocket: WebSocket):
                         opening = interviewer.get_opening_message()
                         print(f"[Interview] Opening message: '{opening[:80]}...'")
 
-                        print(f"[Interview] Calling ElevenLabs for opening TTS (BLOCKING) — t={time.time()-connect_time:.3f}s")
-                        opening_audio = synth.text_to_mulaw(opening)
-                        print(f"[Interview] Opening TTS done ({len(opening_audio)} bytes) — t={time.time()-connect_time:.3f}s")
+                        opening_audio = call_data.get("opening_audio")
+                        if opening_audio:
+                            print(f"[Interview] Using pre-cached opening audio ({len(opening_audio)} bytes) — t={time.time()-connect_time:.3f}s")
+                        else:
+                            print(f"[Interview] Pre-cache miss — calling ElevenLabs (BLOCKING) — t={time.time()-connect_time:.3f}s")
+                            opening_audio = synth.text_to_mulaw(opening)
+                            print(f"[Interview] Opening TTS done ({len(opening_audio)} bytes) — t={time.time()-connect_time:.3f}s")
 
                         loop = asyncio.get_event_loop()
                         availability_text = interviewer.get_availability_question()
