@@ -73,18 +73,20 @@ Twilio/Plivo                call_manager.py              interviewer.py
      |                            |                            |
      |                            | check active_call_data     |
      |                            | for pre-cached audio       |
-     |                            |   ↓ ready → use instantly  |
-     |                            |   ↓ miss  → call ElevenLabs|
+     |                            |   hit  → use instantly     |
+     |                            |   miss → call ElevenLabs   |
      |                            |                            |
      |<-- audio: opening msg -----|  "Hello, am I speaking     |
-     |   (near-zero delay if      |   with {name}?"            |
-     |    pre-cache hit)          |                            |
+     |   (near-zero delay on hit) |   with {name}?"            |
+     |                            |                            |
      |                            | [availability TTS          |
      |                            |  pre-fetched in bg thread] |
      |                            |                            |
      |-- event: "media" (audio) ->|                            |
      |   (candidate speaking)     |-- Deepgram STT ----------->|
      |                            |<- transcript text ----------|
+     |                            |                            |
+     |            [echo filter applied first — see §A]         |
      |                            |                            |
      |                  [identity check — see §4]              |
      |                            |                            |
@@ -94,6 +96,8 @@ Twilio/Plivo                call_manager.py              interviewer.py
      |-- event: "media" (audio) ->|                            |
      |   (candidate responds)     |-- Deepgram STT ----------->|
      |                            |<- transcript text ----------|
+     |                            |                            |
+     |            [echo filter applied first — see §A]         |
      |                            |                            |
      |                  [availability check — see §5]          |
      |                            |                            |
@@ -105,6 +109,8 @@ Twilio/Plivo                call_manager.py              interviewer.py
      |-- event: "media" (audio) ->|                            |
      |   (candidate answers)      |-- Deepgram STT ----------->|
      |                            |<- transcript text ----------|
+     |                            |                            |
+     |            [echo filter applied first — see §A]         |
      |                            |                            |
      |                  [answer routing — see §6]              |
      |                            |                            |
@@ -128,35 +134,117 @@ Twilio/Plivo                call_manager.py              interviewer.py
 
 `dialer.py` spawns a background thread the moment the call is placed. The thread generates
 `"Hello, am I speaking with {name}?"` via ElevenLabs and stores the bytes in
-`active_call_data[call_sid]["opening_audio"]`. The candidate typically takes 5–30 seconds
-to answer (ring time), which is enough for the TTS to complete. When the WebSocket "start"
-event fires, `call_manager.py` reads the cached bytes and sends them immediately — no
-blocking ElevenLabs call on the hot path. If the candidate answers before the thread
-finishes (rare), it falls back to generating on the spot.
+`active_call_data[call_sid]["opening_audio"]`. When the WebSocket "start" event fires,
+`call_manager.py` reads the cached bytes and sends them immediately. If the candidate
+answers before the thread finishes (rare), it falls back to generating on the spot.
+
+---
+
+## §A. Echo Filter (applied before every transcript handler)
+
+Any transcript that contains one of these phrases is **silently dropped** — they are
+AI-generated phrases that sometimes get picked up by the mic:
+
+| Phrase |
+|---|
+| `"let me think"` |
+| `"tell me about"` |
+| `"could you tell"` |
+| `"thank you for"` |
+| `"that is interesting"` |
+| `"great question"` |
+
+---
+
+## §B. Repeat Request Detection (used in all phases)
+
+`is_repeat_request()` returns true if the transcript contains **any** of these phrases:
+
+| English | Hindi |
+|---|---|
+| `"repeat"` | `"phir se"` |
+| `"say that again"` | `"dobara"` |
+| `"say again"` | `"ek baar"` |
+| `"come again"` | `"samajh nahi"` |
+| `"pardon"` | `"sunayi nahi"` |
+| `"what was that"` | |
+| `"didn't catch"` | |
+| `"didn't hear"` | |
+| `"couldn't hear"` | |
+| `"didn't get"` | |
+| `"didn't understand"` | |
+| `"don't understand"` | |
+| `"not clear"` | |
+| `"not getting"` | |
+| `"can you say"` | |
+| `"could you say"` | |
+| `"what did you say"` | |
+| `"once more"` | |
+| `"one more time"` | |
+
+---
+
+## §C. Reschedule / Unavailability Detection (used in availability + live interview)
+
+`_is_reschedule_request()` returns true if the transcript contains **any** of these:
+
+| Reschedule intent | Physically unavailable |
+|---|---|
+| `"reschedule"` | `"driving"` |
+| `"re-schedule"` | `"in a meeting"` |
+| `"call back"` | `"in a call"` |
+| `"call me back"` | `"on a call"` |
+| `"another time"` | `"can't talk"` |
+| `"different time"` | `"cannot talk"` |
+| `"some other time"` | `"can't speak"` |
+| `"other time"` | `"cannot speak"` |
+| `"not a good time"` | `"in traffic"` |
+| `"bad time"` | `"behind the wheel"` |
+| `"busy"` | `"not free"` |
+| `"schedule later"` | `"tied up"` |
+| `"convenient time"` | |
+| `"baad mein"` | |
+| `"baad me"` | |
+| `"phir karo"` | |
+
+When matched, GPT-4o-mini is also called to extract any time phrase from the reply
+(e.g. `"tomorrow 3pm"`, `"Monday morning"`). If a time is found the call ends with
+a confirmation; if not, `reschedule_pending = True` and the AI asks for a time.
+
+**Time hint words used as fallback** (if GPT returns empty):
+`today · tomorrow · yesterday · monday–sunday · morning · afternoon · evening · night ·
+next · week · month · am · pm · o'clock · kal · parso · aaj · subah · shaam · hour · minute`
 
 ---
 
 ## 4. Identity Confirmation Branch
 
-AI asks: **"Hello, am I speaking with {name}?"**
+AI says: **"Hello, am I speaking with {name}?"**
 
 ```
 Candidate reply
       |
-      |-- repeat request? ─────────── YES ──> replay opening question
-      |   (repeat / say that again /           "Hello, am I speaking with {name}?"
-      |    pardon / phir se / dobara)          [no state change]
+      |-- repeat request? (§B) ────── YES ──> replay "Hello, am I speaking with {name}?"
+      |                                        [no state change]
       |
-      |-- contains positive word? ──── YES ──> identity_confirmed = True
-      |   (yes / yeah / speaking /             return availability question
-      |    that's me / haan / ji)
+      |-- negative word? ──────────── YES ──> is_complete = True
+      |                                        "I'm sorry for the confusion. Have a good day."
+      |                                        [call ends]
       |
-      |-- contains negative word? ──── YES ──> is_complete = True
-      |   (no / wrong number / nahi)            return "Sorry for the confusion. Goodbye."
-      |                                          [call ends]
+      |   NEGATIVE WORDS:
+      |     "no"  "wrong number"  "not"  "nahi"  "nhi"
       |
-      └── neither ──────────────────────────>  ask again:
-                                               "Sorry, just to confirm — am I speaking with {name}?"
+      |-- positive word? ──────────── YES ──> identity_confirmed = True
+      |                                        return availability question
+      |
+      |   POSITIVE WORDS:
+      |     "yes"  "yeah"  "yep"  "yup"  "speaking"  "this is"
+      |     "that's me"  "thats me"  "i am"  "i'm"
+      |     "haan"  "han"  "ji"
+      |
+      └── neither ───────────────────────>  ask again:
+                                            "Sorry, just to confirm —
+                                             am I speaking with {name}?"
 ```
 
 ---
@@ -165,101 +253,95 @@ Candidate reply
 
 AI asks: **"Is this a good time to speak for about 10 minutes?"**
 
-Evaluation order matters — each check runs only if the ones above it did not match.
+Checks run in this exact order — first match wins.
 
 ```
 Candidate reply
       |
-      |-- reschedule_pending == True? ── YES ──> repeat request?
-      |   (we already asked for a time)               |
-      |                                               |-- YES ──> replay "What time is convenient?"
-      |                                               |           [no state change]
-      |                                               |
-      |                                               └── NO  ──> extract time phrase
-      |                                                           confirm reschedule
-      |                                                           is_complete = True
-      |                                                           [call ends]
+      |── reschedule_pending == True? ─ YES ──> repeat request? (§B)
+      |   (already asked for a time)                 |
+      |                                              |── YES ──> replay "What time is convenient?"
+      |                                              |           [no state change]
+      |                                              |
+      |                                              └── NO  ──> GPT extracts time phrase
+      |                                                          confirm reschedule → call ends
       |
-      |-- repeat request? ─────────────── YES ──> replay availability question
-      |   (repeat / say again / pardon)              "Is this a good time to speak?"
-      |                                              [no state change]
+      |── repeat request? (§B) ──────── YES ──> replay "Is this a good time to speak
+      |                                          for about 10 minutes?"
+      |                                          [no state change]
       |
-      |-- unavailability / reschedule? ── YES ──> does reply contain a time phrase?
-      |   (reschedule / call me back /                   |
-      |    not a good time / busy /                      |-- YES ──> confirm reschedule time
-      |    driving / in a meeting /                      |           is_complete = True
-      |    on a call / in a call /                       |           [call ends]
-      |    can't talk / cannot talk /                    |
-      |    in traffic / not free /                       └── NO  ──> reschedule_pending = True
-      |    baad mein / phir karo)                                    ask "What time is convenient?"
-      |                                                              [waits for next reply → confirm]
+      |── reschedule / unavailable? ─── YES ──> see §C
+      |   (§C keyword matched)                   GPT extracts time phrase
+      |                                          |── time found ──> confirm + call ends
+      |                                          └── no time ───> reschedule_pending = True
+      |                                                            "What time is convenient?"
       |
-      |-- negative word? ──────────────── YES ──> is_complete = True
-      |   (no / not now / nahi)                    return "We will reach out to reschedule. Goodbye."
-      |                                             [call ends]
+      |── negative word? ─────────────── YES ──> is_complete = True
+      |                                           "We will reach out to reschedule. Goodbye."
+      |                                           [call ends]
       |
-      |-- positive word? ──────────────── YES ──> interview_started = True
-      |   (yes / yeah / sure / okay /               generate first question
-      |    ok / yep / go ahead /                    append to conversation_history
-      |    absolutely / of course /                 return "Perfect. Let us get started. {Q1}"
-      |    lets go / haan / bilkul /
-      |    theek hai)
+      |   NEGATIVE WORDS:
+      |     "no"  "not now"  "later"  "cant"  "cannot"
+      |     "nahi"  "nhi"  "abhi nahi"
       |
-      └── unclear ───────────────────────────>  ask again:
-                                               "Is this a good time to proceed?"
+      |── positive word? ─────────────── YES ──> interview_started = True
+      |                                           generate first question
+      |                                           append to conversation_history
+      |                                           "Perfect. Let us get started. {Q1}"
+      |
+      |   POSITIVE WORDS:
+      |     "yes"  "yeah"  "sure"  "okay"  "ok"  "yep"
+      |     "go ahead"  "good time"  "absolutely"  "of course"
+      |     "lets go"  "let's go"
+      |     "haan"  "han"  "bilkul"  "theek"  "theek hai"
+      |
+      └── unclear ────────────────────────────>  "Sorry, I missed that.
+                                                  Is this a good time to proceed?"
 ```
-
-**Note on removed positive words:** `"fine"`, `"ready"`, `"start"`, `"begin"`, `"please"`,
-`"proceed"` were removed from the positive list because they appear naturally in
-unavailability sentences (e.g. *"I'm driving, it's fine"*, *"start calling me later"*).
-The unavailability check runs before the positive check, so phrases like
-*"I'm driving but okay"* are still caught correctly via the keyword list.
 
 ---
 
 ## 6. Answer Routing During Interview
 
-Called by `generate_response()` for every candidate utterance after `interview_started = True`.
+Called by `generate_response()` for every utterance after `interview_started = True`.
 
 ```
 Candidate utterance
       |
-      |-- repeat request? ─────────── YES ──> replay _last_question
-      |   (repeat / say that again /           "Of course. {last_question}"
-      |    pardon / phir se)                   [no turn consumed]
+      |── repeat request? (§B) ──────── YES ──> "Of course. {last_question}"
+      |                                          [no turn consumed]
       |
-      |-- reschedule request? ─────── YES ──> same branch as §5 reschedule
+      |── reschedule / unavailable? ─── YES ──> see §C  (same flow as §5 reschedule)
+      |   (§C keyword matched)
       |
-      |-- don't-know / skip? ──────── YES ──> question_count += 1
-      |   (don't know / no idea /              play skip filler
-      |    blank / pass / nahi pata)           |
-      |                                        |-- question_count >= 5? ──> closing message
-      |                                        |                            is_complete = True
-      |                                        |                            [call ends]
-      |                                        |
-      |                                        └── else ──> _generate_next_question()
-      |                                                     (GPT on different topic)
+      |── don't-know / skip? ──────────  YES ──> question_count += 1
+      |                                           play skip filler
+      |                                           |── count >= 5 ──> closing + call ends
+      |                                           └── else ──────> GPT: new topic question
       |
-      |-- answer too short? ────────── YES ──> ask to elaborate
-      |   (< 5 words OR < 4 non-filler)        "Could you tell me a bit more about that?"
-      |                                         [no turn consumed]
+      |   DON'T-KNOW PHRASES:
+      |     "don't know"  "dont know"  "do not know"  "not aware"  "not sure"
+      |     "no idea"  "i forgot"  "can't remember"  "cannot remember"
+      |     "cant remember"  "i forget"  "not familiar"  "never used"
+      |     "never worked"  "no experience with"  "haven't used"  "havent used"
+      |     "not worked on"  "not worked with"  "blank"  "skip"
+      |     "next question"  "pass"
+      |     "nahi pata"  "nahi malum"  "pata nahi"  "malum nahi"  "yaad nahi"
       |
-      └── sufficient answer ──────────────>  append to conversation_history
-                                             question_count += 1
-                                             GPT generates next question
-                                             |
-                                             |-- OFF_TOPIC response? ──> undo increment
-                                             |                           redirect to interview
-                                             |
-                                             |-- INTERVIEW_COMPLETE? ──> is_complete = True
-                                             |   (after Q5)               strip sentinel
-                                             |                            play closing line
-                                             |                            [call ends]
-                                             |
-                                             └── normal ──> prepend filler phrase
-                                                            extract topic → covered_topics
-                                                            append to conversation_history
-                                                            play question audio
+      |── answer too short? ─────────── YES ──> "Could you tell me a bit more about that?"
+      |                                          [no turn consumed]
+      |
+      |   SHORT ANSWER RULE:
+      |     total words < 5  OR  non-filler words < 4
+      |     filler words ignored: yes · no · okay · ok · sure · yeah · um · uh · hmm · right · fine
+      |
+      └── sufficient answer ─────────────────> append to conversation_history
+                                               question_count += 1
+                                               GPT generates next question
+                                               |
+                                               |── OFF_TOPIC ──> undo increment, redirect
+                                               |── INTERVIEW_COMPLETE ──> closing + call ends
+                                               └── normal ──> filler + question + topic logged
 ```
 
 ---
@@ -269,16 +351,16 @@ Candidate utterance
 ```
 WebSocket "stop" event OR WebSocketDisconnect
       |
-      |-- transcriber.disconnect()      (close Deepgram connection)
+      |── transcriber.disconnect()     (close Deepgram connection)
       |
-      |-- interviewer.get_full_transcript()
+      |── interviewer.get_full_transcript()
       |   Formats conversation_history as:
-      |     Interviewer: "Perfect. Let us get started. {Q1}"   ← first turn recorded on start
+      |     Interviewer: "Perfect. Let us get started. {Q1}"
       |     Candidate:   {answer 1}
       |     Interviewer: {filler + Q2}
       |     ...
       |
-      |-- is_complete == True?
+      |── is_complete == True?
       |       |
       |       YES ──> Reporter.generate(transcript, resume, jd)
       |               GPT-4o-mini returns:
@@ -313,15 +395,11 @@ To prevent the AI from cutting in while the candidate is still speaking:
 - **Debounce delay**: 1.0 s once the interview is running, 0.8 s during pre-interview exchanges.
 - **`ai_is_speaking` flag**: any transcript that arrives while the AI is playing audio is discarded entirely.
 - **`cooldown_until`**: after AI finishes speaking, a 1.2 s cooldown (0.3 s pre-interview) ignores any transcript — prevents echo or mic bleed from the AI's own voice being picked up.
-- **Echo phrase filter**: a fixed list of AI-like phrases (`"let me think"`, `"great question"`, etc.) are dropped even if Deepgram transcribes them.
+- **Echo phrase filter**: see §A — AI-like phrases are dropped before any handler runs.
 
 ---
 
-## 10. Repeat Request Handling (all phases)
-
-The same `is_repeat_request()` method is used across all three phases of the call.
-It matches phrases in English and Hindi (e.g. `repeat`, `say that again`, `pardon`,
-`phir se`, `dobara`, `ek baar`).
+## 10. Repeat Request Handling — Summary Table
 
 | Phase | What gets replayed | State change |
 |---|---|---|
@@ -330,4 +408,4 @@ It matches phrases in English and Hindi (e.g. `repeat`, `say that again`, `pardo
 | Reschedule pending | `"What time would be convenient for you?"` | None |
 | Live interview | `"Of course. {last_question}"` | None |
 
-No turn is consumed in any case — the question counter does not increment.
+No turn is consumed in any case — `question_count` does not increment.

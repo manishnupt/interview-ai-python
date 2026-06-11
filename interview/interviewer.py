@@ -648,3 +648,19 @@ Questions asked so far: {self.question_count} of 5
             role = "Interviewer" if msg["role"] == "assistant" else "Candidate"
             lines.append(f"{role}: {msg['content']}")
         return "\n\n".join(lines)
+
+    def get_current_debounce_delay(self) -> float:
+        """
+        Returns the silence wait time (in seconds) before
+        the AI responds to a candidate utterance.
+
+        Adjusts based on conversation phase:
+        - Pre-interview: short confirmations expected, 0.8s
+        - Q1-Q2: candidate is nervous/warming up, give more time, 1.5s
+        - Q3+: conversation is flowing, 1.2s
+        """
+        if not self.interview_started:
+            return 0.8
+        if self.question_count <= 2:
+            return 1.5
+        return 1.2

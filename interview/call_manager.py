@@ -76,8 +76,12 @@ async def media_stream(websocket: WebSocket):
         async def delayed_response():
             nonlocal ai_is_speaking, cooldown_until
             try:
-                debounce = 1.0 if interviewer and interviewer.interview_started else 0.8
-                await asyncio.sleep(debounce)
+                delay = (interviewer.get_current_debounce_delay()
+                         if interviewer is not None else 0.8)
+                print(f"[Debounce] Waiting {delay}s "
+                      f"(question={interviewer.question_count if interviewer else 'n/a'}, "
+                      f"started={interviewer.interview_started if interviewer else False})")
+                await asyncio.sleep(delay)
             except asyncio.CancelledError:
                 return
 
